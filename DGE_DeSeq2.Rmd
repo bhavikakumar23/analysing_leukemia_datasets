@@ -1,0 +1,293 @@
+---
+title: "differential gene expression"
+author: "Bhavika Kumar"
+date: "2024-03-28"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Running differential gene expression on KOPN8 cell line. There are two replicates of each resistant and sensitive cell lines. 
+
+loading libraries
+```{r warning=FALSE, message=FALSE}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(DESeq2)
+  library(ensembldb)
+  library(AnnotationHub)
+  library(GenomicFeatures)
+  library(ggrepel)
+})
+```
+
+loading KOPN8 data
+```{r warning=FALSE, message=FALSE}
+# sensitive cells
+s_1 <- read.table("//wsl.localhost/Ubuntu/home/bhavika_kumar/ball_analysis/AR9_KOPNT_Transcrip_wholecell_pass1.FeatureCounts.tsv", header = T, sep = "\t")
+s_2 <- read.table("//wsl.localhost/Ubuntu/home/bhavika_kumar/ball_analysis/AR10_KOPNT_Transcrip_wholecell_pass2.FeatureCounts.tsv", header = T, sep = "\t")
+
+# resistant cells
+r_1 <- read.table("//wsl.localhost/Ubuntu/home/bhavika_kumar/ball_analysis/ARMJ_5_KOPN_Resis_T9_VCR_9000ng_pass1.FeatureCounts.tsv", header = T, sep = "\t")
+r_2 <- read.table("//wsl.localhost/Ubuntu/home/bhavika_kumar/ball_analysis/ARMJ_9_KOPN_Resis_T9_VCR_9000ng_pass2.FeatureCounts.tsv", header = T, sep = "\t")
+```
+
+loading REH data
+```{r warning=FALSE, message=FALSE}
+#sensitive cells
+s_1 <- read.table("//wsl.localhost/Ubuntu/home/bhavika_kumar/ball_analysis/AR3_REH_Transcrip_wholecell_pass1.FeatureCounts.tsv", header = T, sep = "\t")
+s_2 <- read.table("//wsl.localhost/Ubuntu/home/bhavika_kumar/ball_analysis/AR4_REH_Transcrip_wholecell_pass2.FeatureCounts.tsv", header = T, sep = "\t")
+
+#resistant cells
+r_1 <- read.table("//wsl.localhost/Ubuntu/home/bhavika_kumar/ball_analysis/ARMJ_1_REH_Resis_T8_VCR_6840ng_pass1.FeatureCounts.tsv", header = T, sep = "\t")
+r_2 <- read.table("//wsl.localhost/Ubuntu/home/bhavika_kumar/ball_analysis/ARMJ_24_REH_Resis_T8_VCR_5000ng_pass3.FeatureCounts.tsv", header = T, sep = "\t")
+```
+
+
+getting the counts from the datasets from the 7th and 8th columns of the data sets
+```{r warning=FALSE, message=FALSE}
+s_1_counts <- cbind(s_1,s_1[,7]+s_1[,8])
+s_2_counts <- cbind(s_2,s_2[,7]+s_2[,8])
+r_1_counts <- cbind(r_1,r_1[,7]+r_1[,8])
+r_2_counts <- cbind(r_2,r_2[,7]+r_2[,8])
+```
+
+Renaming the counts column
+```{r warning=FALSE, message=FALSE}
+colnames(s_1_counts)[9] <- "counts_s_1"
+colnames(s_2_counts)[9] <- "counts_s_2"
+colnames(r_1_counts)[9] <- "counts_r_1"
+colnames(r_2_counts)[9] <- "counts_r_2"
+```
+
+Adding a condition column in the data to descibe from which cell is it
+```{r warning=FALSE, message=FALSE}
+s_1_counts$condition <- "sensitive_rep_1"
+s_2_counts$condition <- "sensitive_rep_2"
+r_1_counts$condition <- "resistant_rep_1"
+r_2_counts$condition <- "resistant_rep_2"
+```
+
+selecting the required columns for further analysis
+```{r warning=FALSE, message=FALSE}
+s_1_select <- s_1_counts %>% 
+  dplyr::select(Geneid, counts_s_1, condition)
+s_2_select <- s_2_counts %>% 
+  dplyr::select(Geneid, counts_s_2, condition)
+r_1_select <- r_1_counts %>% 
+  dplyr::select(Geneid, counts_r_1, condition)
+r_2_select <- r_2_counts %>% 
+  dplyr::select(Geneid, counts_r_2, condition)
+```
+
+change the colnames to counts
+```{r warning=FALSE, message=FALSE}
+colnames(s_1_select)[2] <- "counts"
+colnames(s_2_select)[2] <- "counts"
+colnames(r_1_select)[2] <- "counts"
+colnames(r_2_select)[2] <- "counts"
+```
+
+
+Merging all the datasets together
+```{r warning=FALSE, message=FALSE}
+data_s <- merge(x=s_1_select, y=s_2_select, all=T)
+data_r <- merge(x=r_1_select, y=r_2_select, all=T)
+data_sr <- merge(x=data_s, y=data_r, all=T)
+```
+
+clearing the environment
+```{r warning=FALSE, message=FALSE}
+rm(r_1, r_1_counts, r_1_select, r_2, r_2_counts, r_2_select, s_1, s_1_counts, s_1_select, s_2, s_2_counts, s_2_select)
+```
+
+There are many NAs in the data frame, converting all NAs to zero
+```{r warning=FALSE, message=FALSE}
+data_sr[is.na(data_sr)]=0
+```
+
+formatting the data as required by deseq2 
+```{r warning=FALSE, message=FALSE}
+data <- pivot_wider(data_sr, names_from = condition, values_from = counts)
+data[is.na(data)] <- 0
+```
+
+cleaning the environment
+```{r warning=FALSE, message=FALSE}
+rm(data_r, data_s)
+```
+
+Converting data to matrix
+```{r warning=FALSE, message=FALSE}
+countData <- as.matrix(data[ ,-1])
+colnames(countData)=c("resistant_rep_1", "resistant_rep_2", "sensitive_rep_1", "sensitive_rep_2")
+rownames(countData)=data$Geneid
+```
+
+data frame of only the name of the condition. It is important to keep the columns of the count matrix and rows of column data exactly same. 
+```{r warning=FALSE, message=FALSE}
+colData <- data.frame(condition = factor(c("resistant", "resistant", "sensitive", "sensitive"), levels = c("resistant", "sensitive")))
+rownames(colData) <- c("resistant_rep_1", "resistant_rep_2", "sensitive_rep_1", "sensitive_rep_2")
+```
+
+Constructing the deseq dataset
+```{r warning=FALSE, message=FALSE}
+dds <- DESeqDataSetFromMatrix(countData = countData,
+                              colData = colData, 
+                              design = ~condition)
+dds
+```
+
+pre-filtering those genes that have low counts. This is done for two reasons: we are filtering those reads that have very few reads and we are reducing the memory size of the dds object and the second reason is that we increase the speed of count modelling within DeSeq2. 
+```{r warning=FALSE, message=FALSE}
+keep <- rowSums(counts(dds) >= 5) >= 2
+dds <- dds[keep,]
+dds
+```
+
+differential expression
+```{r warning=FALSE, message=FALSE}
+dds <- DESeq(dds)
+```
+
+evaluating results
+```{r warning=FALSE, message=FALSE}
+res <- results(dds, contrast = c("condition", "resistant", "sensitive"), alpha = 0.05)
+
+a <- resultsNames(dds)
+
+res[which(res$log2FoldChange > 1 & res$padj < 0.05),]
+```
+
+Ordering the results by p-value so that we get the most significantly expressed genes first
+```{r warning=FALSE, message=FALSE}
+resO <- res[order(res$pvalue), ]
+summary(resO)
+```
+
+MA plot to see differentially expressed genes
+```{r warning=FALSE, message=FALSE}
+iv.sig <- res$padj < 0.05
+
+iv.up <- res$log2FoldChange > 1 & iv.sig
+iv.dn <- res$log2FoldChange < -1 & iv.sig
+
+plot(log2(res$baseMean + 1), res$log2FoldChange, pch=20, col="grey",
+     main="KOPN8 Resistant vs Sensitive", xlab="log2(baseMean)", ylab="log2FC")
+points(log2(res$baseMean + 1)[iv.up], res$log2FoldChange[iv.up], col="red", pch=20)
+points(log2(res$baseMean + 1)[iv.dn], res$log2FoldChange[iv.dn], col="green", pch=20)
+abline(h=0)
+```
+
+Volcano plot
+
+creating a dataframe from the res object that was created after deseq2 was performed
+```{r warning=FALSE, message=FALSE}
+res1 <- results(dds, tidy = T)
+
+res_df <- data.frame(res1)
+colnames(res_df)[1] <- "gene_id"
+```
+
+Adding a column of differentially expressed genes column in the data frame
+```{r warning=FALSE, message=FALSE}
+res_df$diffexpressed <- "NO"
+res_df$diffexpressed[res_df$log2FoldChange > 1 & res_df$padj < 0.05] <- "UP"
+res_df$diffexpressed[res_df$log2FoldChange < -1 & res_df$padj < 0.05] <- "DOWN"
+```
+
+replacing NA padj values to 0 
+```{r warning=FALSE, message=FALSE}
+res_df[is.na(res_df)]=0
+```
+
+checking the number of up and downregulated genes and separating only DGEs which are Up and Down Regulated genes
+```{r warning=FALSE, message=FALSE}
+up <- res_df %>% 
+  dplyr::filter(diffexpressed=="UP")
+
+down <- res_df %>% 
+  dplyr::filter(diffexpressed=="DOWN")
+```
+
+Adding biotypes to the data using the code below
+```{r warning=FALSE, message=FALSE}
+ah <- AnnotationHub()  #to connect to Annotation Hub
+edb <- ah[[names(query(ah, "EnsDb.Hsapiens.v100"))]] #homo sapiens annotation package
+
+data_biotype <- genes(edb, columns = c("gene_id", "gene_biotype", "gene_name"), return.type = "DataFrame")  #returning a data frame
+```
+
+checking the edb dataset if we could get the gene names of the data
+```{r warning=FALSE, message=FALSE}
+supportedFilters(edb)
+```
+
+The table includes only gene id, gene biotype and gene name columns
+```{r warning=FALSE, message=FALSE}
+data_df <- as.data.frame(data_biotype)
+```
+
+Merging res_df that has all the genes with their gene names
+```{r warning=FALSE, message=FALSE}
+res_df_names <- merge(x=res_df, y=data_df, by="gene_id")
+```
+
+creating a column that contains the names of genes that are differentially expressed. It will return NA if they are not. 
+```{r warning=FALSE, message=FALSE}
+res_df_names$delabel <- ifelse(res_df_names$gene_name %in% head(res_df_names[order(res_df_names$padj), "gene_name"], 30), res_df_names$gene_name, NA)
+```
+
+
+Constructing volcano plot
+```{r warning=FALSE, message=FALSE}
+ggplot(data = res_df_names, aes(x=log2FoldChange, y=-log10(padj), col=diffexpressed, label=delabel)) + 
+  geom_point(size=2)+
+  geom_text()+
+  geom_vline(xintercept = c(-1,1), col="gray", linetype="dashed")+
+  geom_hline(yintercept = -log10(0.05), col="gray", linetype="dashed")+
+  
+  scale_color_manual(values = c("green", "gray", "red"), 
+                     labels=c("Downregulated", "Not significant", "Upregulated")) + 
+  coord_cartesian(ylim=c(0,70), xlim=c(-8,8)) +
+  labs(color="Differentially expressed", x=expression("log"[2]*"FC"), y=expression("-log"[10]*"adj p-value")) + theme_bw() + ggtitle("Volcano Plot- REH") + theme(axis.text=element_text(size=16), axis.title=element_text(size=18)) + theme(plot.title = element_text(size=18, face = "bold"))
+```
+
+PCA plot
+using VST model for the plot- its a normalization model
+```{r warning=FALSE, message=FALSE}
+plot_pca <- vst(dds, blind = T)
+head(assay(plot_pca), 3)
+colData(plot_pca)
+
+plot <- plotPCA(plot_pca, intgroup = "condition", returnData=T)
+percentVar <- round(100*attr(plot, "percentVar"))
+ggplot(plot, aes(PC1, PC2, color=condition))+ geom_point(size=3) + theme_bw() +
+  xlab(paste0("PC1: ", percentVar[1], "% variance"))+
+  ylab(paste0("PC2: ", percentVar[2], "% variance"))+ coord_fixed()
+```
+
+Creating dataframe of only DEGs
+```{r warning=FALSE, message=FALSE}
+up_down <- res_df %>% 
+  dplyr::filter(diffexpressed=="UP" | diffexpressed=="DOWN")
+```
+
+Including the biotype column in the deseq2 object (only)
+```{r warning=FALSE, message=FALSE}
+up_down_data <- merge(x=up_down, y=data_df, by="gene_id")
+
+final <- up_down_data %>% 
+  dplyr::select(gene_id, diffexpressed, gene_biotype)
+
+final_number <- final %>% 
+  dplyr::group_by(gene_biotype) %>% 
+  summarise(counts=n())
+```
+
+Making barplot for biotypes
+```{r warning=FALSE, message=FALSE}
+ggplot(final_number, aes(x=gene_biotype, y=counts)) + geom_bar(stat="identity", width = 0.5, fill="steelblue") + theme_bw() + geom_text(aes(label=counts), size=3.5, color="black", vjust=0.05) + theme(axis.text.x = element_text(angle=45, hjust = 1)) + labs(x="Gene Biotypes", y="Number of DEGs") 
+```
+
+
