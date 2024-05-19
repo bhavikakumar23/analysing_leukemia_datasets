@@ -1,0 +1,181 @@
+---
+title: "pathway_analysis_approach_2"
+author: "Bhavika Kumar"
+date: "2024-04-25"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Using rWiki Pathways
+
+loading libraries
+```{r warning=FALSE, message=FALSE}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(DESeq2)
+  library(ensembldb)
+  library(AnnotationHub)
+  library(GenomicFeatures)
+  library(ggrepel)
+  library(rWikiPathways)
+  library(DOSE)
+  library(GO.db)
+  library(GSEABase)
+  library(org.Hs.eg.db)
+  library(clusterProfiler)
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(stringr)
+  library(RColorBrewer)
+  library(RCy3)
+})
+```
+
+loading data
+KOPN sensitive vs resistant
+```{r warning=FALSE, message=FALSE}
+kopn_expr <- read.csv("d:/Users/Sujata Kumar/Desktop/Agin-Merin's Project/res_kopn8.csv", header = T)
+
+# Preparing up and down regulated genes lists
+up.genes <- kopn_expr[kopn_expr$log2FoldChange > 1 & kopn_expr$padj < 0.05, 1]
+dn.genes <- kopn_expr[kopn_expr$log2FoldChange < -1 & kopn_expr$padj < 0.05, 1]
+bkgd.genes <- kopn_expr[,1]
+```
+
+adding ENTREZ ID to the data
+```{r warning=FALSE, message=FALSE}
+# adding entrez id with up regulated gene dataset
+up.genes.entrez <- clusterProfiler::bitr(up.genes, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+cat("\n\nWhich column contains my new Entrez IDs?\n")
+head(up.genes.entrez)
+
+keytypes(org.Hs.eg.db)
+
+# adding entrez id with down regulated gene dataset
+dn.genes.entrez <- clusterProfiler::bitr(dn.genes, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+
+# adding entrez id with rest of the gene dataset
+bkgd.genes.entrez <- clusterProfiler::bitr(bkgd.genes, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+```
+
+Gene Ontology- it aims to identify biological processes, cellular locations and molecular functions that are impacted in the condition studied. 
+```{r warning=FALSE, message=FALSE}
+egobp <- clusterProfiler::enrichGO(
+  gene = up.genes.entrez[[2]],
+  universe = bkgd.genes.entrez[[2]],
+  OrgDb = org.Hs.eg.db, 
+  ont = "BP",
+  pAdjustMethod = "fdr",
+  pvalueCutoff = 0.05,
+  readable = T
+)
+
+# seeing the data first 10 rows
+head(egobp, 10)
+
+# plotting the results
+barplot(egobp, showCategory = 20)
+dotplot(egobp, showCategory = 20)
+goplot(egobp)
+
+ggplot(egobp[1:20], aes(x=reorder(Description, -pvalue), y=Count, fill=-p.adjust)) +
+    geom_bar(stat = "identity") +
+    coord_flip() +
+    scale_fill_continuous(low="blue", high="red") +
+    labs(x = "", y = "", fill = "p.adjust") +
+    theme(axis.text=element_text(size=11))
+```
+
+Enrichment analysis- creating an enrichment map, instead of nodes representing genes, nodes represent pathways or functions
+
+GeneRatio = k/n
+
+k is the overlap between your genes-of-interest and the geneset
+n is the number of all unique genes-of-interest
+
+BgRatio=M/N
+
+M is the number of genes within each geneset
+N is the number of all unique genes across all genesets (universe)
+
+Term size refers to the number of genes associated with a given GO term or pathway
+```{r warning=FALSE, message=FALSE}
+egobp.results.df <- egobp@result
+egobp.results.df$term.size <- gsub("/(\\d+)", "", egobp.results.df$BgRatio)
+```
+
+Filter for term size to keep only term size >=3, gene count >= 5 and subset
+```{r warning=FALSE, message=FALSE}
+egobp.results.df <- egobp.results.df[which(egobp.results.df[,'term.size'] >= 3 & egobp.results.df[,'Count'] >= 5),]
+egobp.results.df <- egobp.results.df[c("ID", "Description", "pvalue", "qvalue", "geneID")]
+```
+
+Formatting gene list column
+```{r warning=FALSE, message=FALSE}
+egobp.results.df$geneID <- gsub("/", ",", egobp.results.df$geneID)
+```
+
+add column for phenotype
+```{r warning=FALSE, message=FALSE}
+egobp.results.df <- cbind(egobp.results.df, phenotype=1)
+egobp.results.df <- egobp.results.df[, c(1, 2, 3, 4, 6, 5)]
+```
+
+change column headers
+```{r warning=FALSE, message=FALSE}
+colnames(egobp.results.df) <- c("Name","Description", "pvalue","qvalue","phenotype", "genes")
+```
+
+Saving the file
+```{r warning=FALSE, message=FALSE}
+egobp.results.filename <-file.path(getwd(),paste("clusterprofiler_cluster_enr_results.txt",sep="_"))
+write.table(egobp.results.df,egobp.results.filename,col.name=TRUE,sep="\t",row.names=FALSE,quote=FALSE)
+```
+
+Pathway analysis
+up regulated genes
+```{r warning=FALSE, message=FALSE}
+ewp.up <- clusterProfiler::enrichWP(
+    up.genes.entrez[[2]],
+    universe = bkgd.genes.entrez[[2]],
+    organism = "Homo sapiens",
+    pAdjustMethod = "fdr",
+    pvalueCutoff = 0.1, #p.adjust cutoff; relaxed for demo purposes
+)
+
+head(ewp.up)
+```
+
+Adding gene symbols to the result object 
+```{r warning=FALSE, message=FALSE}
+ewp.up <- DOSE::setReadable(ewp.up, org.Hs.eg.db, keyType = "ENTREZID")
+head(ewp.up)
+```
+
+Plotting...
+```{r warning=FALSE, message=FALSE}
+barplot(ewp.up, showCategory = 20)
+dotplot(ewp.up, showCategory = 20)
+```
+
+down regulated genes
+```{r warning=FALSE, message=FALSE}
+ewp.dn <- enrichWP(
+    dn.genes.entrez[[2]],
+    #universe = bkgd.genes[[2]],  #hint: comment out to get any results for demo
+    organism = "Homo sapiens",
+    pAdjustMethod = "fdr",
+    pvalueCutoff = 0.1, #p.adjust cutoff; relaxed for demo purposes
+)
+
+ewp.dn <- setReadable(ewp.dn, org.Hs.eg.db, keyType = "ENTREZID")
+
+head(ewp.dn)
+dotplot(ewp.dn, showCategory = 20)
+
+enrichDF_down <- as.data.frame(ewp.dn)
+enrichDF_up <- as.data.frame(ewp.up)
+```
+

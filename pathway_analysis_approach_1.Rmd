@@ -1,0 +1,285 @@
+---
+title: "pathway_analysis_approach_1"
+author: "Bhavika Kumar"
+date: "2024-04-24"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Using DAVID annotation tool. Its a web based tool particularly for gene-enrichment analysis. 
+
+loading libraries
+```{r warning=FALSE, message=FALSE}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(DESeq2)
+  library(ensembldb)
+  library(AnnotationHub)
+  library(GenomicFeatures)
+  library(ggrepel)
+  library(pathview)
+  library(pander)
+  library(SPIA)
+  library(org.Hs.eg.db)
+})
+```
+
+Exploring the pathway below is not important
+
+loading data
+```{r warning=FALSE, message=FALSE}
+kopn_degs <- read.table("d:/Users/Sujata Kumar/Desktop/Agin-Merin's Project/KOPN8_deg.tsv", header = T, sep = "")
+```
+
+selecting only the gene_id column as the david tool requires the list of gene id to be uploaded and saving it in a text file
+```{r warning=FALSE, message=FALSE}
+test_data <- kopn_degs %>% 
+  dplyr::select(gene_id)
+
+write.table(test_data, file = "d:/Users/Sujata Kumar/Desktop/Agin-Merin's Project/degs_names.txt", row.names = FALSE, quote = FALSE, col.names = FALSE)
+```
+
+Below shows the DEGs in the pathways and change in expression of each gene
+
+```{r warning=FALSE, message=FALSE}
+#Pathway ids for humans
+data("paths.hsa")
+pander(head(paths.hsa, n=5))
+
+#checking gene.idtype argument possibiities
+data("gene.idtype.list")
+pander(gene.idtype.list)
+
+#visuaising data
+deseq.degs.logfc <- subset(merged_4, padj < 0.05, select = log2FoldChange)
+pander(head(deseq.degs.logfc))
+
+pathview(gene.data = deseq.degs.logfc, 
+         pathway.id = "00020",
+         species = "hsa")
+```
+
+###########################################################
+
+Trying to look for topology of how genes interact with each other. In what pathway genes are involved and in what pathways the genes are inhibited. 
+
+loading the data
+```{r warning=FALSE, message=FALSE}
+kopn_expr <- read.csv("d:/Users/Sujata Kumar/Desktop/Agin-Merin's Project/res_kopn8.csv", header = T)
+reh_expr <- read.csv("d:/Users/Sujata Kumar/Desktop/Agin-Merin's Project/res_reh.csv", header = T)
+
+# getting the ids vector
+ids <- kopn_expr$row
+ids <- reh_expr$row
+
+# getting the entrez id in a different vector
+entrez <- mapIds(org.Hs.eg.db, keys = ids, keytype = "ENSEMBL", column = "ENTREZID")
+
+# converting entrez to data frame
+entrez_df <- as.data.frame(entrez)
+
+# converting row names to column
+entrez_df$ENSEMBL <- row.names(entrez_df)
+
+# changing the column name to ENSEMBL 
+colnames(kopn_expr)[1] <- "ENSEMBL"
+colnames(reh_expr)[1] <- "ENSEMBL"
+
+# merging the data
+merged_data <- merge(x=kopn_expr, y=entrez_df, all=T)
+merged_data <- merge(x=reh_expr, y=entrez_df, all=T)
+
+#loading merged 3 which has all the degs
+merged_data[is.na(merged_data)] <- 0
+
+# data subsetted which does not have any zeros
+merged_subset <- merged_data[merged_data$entrez != 0, ]
+```
+
+Making the background genes and significant genes separately in differet vectors
+```{r warning=FALSE, message=FALSE}
+background_entrez <- merged_subset$entrez
+sig_res_entrez <- merged_subset[which(merged_subset$padj < 0.05), ]
+sig_entrez <- sig_res_entrez$log2FoldChange
+names(sig_entrez) <- sig_res_entrez$entrez
+
+head(sig_entrez)
+```
+
+Removing duplicates and NA values
+```{r warning=FALSE, message=FALSE}
+sig_entrez <- sig_entrez[!is.na(names(sig_entrez))] 
+
+sig_entrez <- sig_entrez[!duplicated(names(sig_entrez))]
+
+background_entrez <- merged_subset$entrez
+
+background_entrez <- background_entrez[!is.na(background_entrez)]
+
+background_entrez <- background_entrez[!duplicated(background_entrez)]
+```
+
+Running SPIA
+```{r warning=FALSE, message=FALSE}
+spia_result <- spia(de=sig_entrez, all = background_entrez, organism = "hsa")
+
+head(spia_result)
+```
+
+Saving the spia result
+```{r warning=FALSE, message=FALSE}
+write.table(spia_result, file = "d:/Users/Sujata Kumar/Desktop/Agin-Merin's Project/spia_kopn_results.txt", row.names = FALSE)
+write.table(spia_result, file = "d:/Users/Sujata Kumar/Desktop/Agin-Merin's Project/spia_reh_results.txt", row.names = FALSE)
+```
+
+###################################################################
+
+Loading both SPIA data of reh and kopn
+```{r warning=FALSE, message=FALSE}
+spia_res_kopn <- read.table("d:/Users/Sujata Kumar/Desktop/Agin-Merin's Project/spia_results_kopn.txt", header = T)
+spia_res_reh <- read.table("d:/Users/Sujata Kumar/Desktop/Agin-Merin's Project/spia_reh_results.txt", header = T)
+```
+
+Filtering cancer pathways from the datasets
+```{r warning=FALSE, message=FALSE}
+# from kopn datasets
+filter_kopn <- spia_res_kopn %>% 
+  dplyr::filter(Name=="Non-small cell lung cancer" 
+                | Name=="Basal cell carcinoma" 
+                | Name=="VEGF signaling pathway" 
+                | Name=="Pathways in cancer" 
+                | Name=="Prostate cancer" 
+                | Name=="B cell receptor signaling pathway" 
+                | Name=="Wnt signaling pathway" 
+                | Name=="RNA degradation" 
+                | Name=="Jak-STAT signaling pathway" 
+                | Name=="Apoptosis" 
+                | Name=="RNA transport" 
+                | Name=="T cell receptor signaling pathway" 
+                | Name=="NF-kappa B signaling pathway" 
+                | Name=="Hedgehog signaling pathway" 
+                | Name=="Pancreatic cancer" 
+                | Name=="Small cell lung cancer" 
+                | Name=="MAPK signaling pathway" 
+                | Name=="Renal cell carcinoma" 
+                | Name=="Thyroid cancer" 
+                | Name=="mTOR signaling pathway" 
+                | Name=="TGF-beta signaling pathway" 
+                | Name=="PPAR signaling pathway" 
+                | Name=="p53 signaling pathway" 
+                | Name=="Endometrial cancer" 
+                | Name=="Acute myeloid leukemia" 
+                | Name=="Melanoma" 
+                | Name=="Toll-like receptor signalling pathway" 
+                | Name=="Chronic myeloiod leukemia" 
+                | Name=="Notch signaling pathway" 
+                | Name=="Colorectal cancer" 
+                | Name=="Viral carcinogenesis" 
+                | Name=="Transcriptional misregulation in cancer")
+
+# from kopn datasets
+filter_reh <- spia_res_reh %>% 
+  dplyr::filter(Name=="Non-small cell lung cancer" 
+                | Name=="Basal cell carcinoma" 
+                | Name=="VEGF signaling pathway" 
+                | Name=="Pathways in cancer" 
+                | Name=="Prostate cancer" 
+                | Name=="B cell receptor signaling pathway" 
+                | Name=="Wnt signaling pathway" 
+                | Name=="RNA degradation" 
+                | Name=="Jak-STAT signaling pathway" 
+                | Name=="Apoptosis" 
+                | Name=="RNA transport" 
+                | Name=="T cell receptor signaling pathway" 
+                | Name=="NF-kappa B signaling pathway" 
+                | Name=="Hedgehog signaling pathway" 
+                | Name=="Pancreatic cancer" 
+                | Name=="Small cell lung cancer" 
+                | Name=="MAPK signaling pathway" 
+                | Name=="Renal cell carcinoma" 
+                | Name=="Thyroid cancer" 
+                | Name=="mTOR signaling pathway" 
+                | Name=="TGF-beta signaling pathway" 
+                | Name=="PPAR signaling pathway" 
+                | Name=="p53 signaling pathway" 
+                | Name=="Endometrial cancer" 
+                | Name=="Acute myeloid leukemia" 
+                | Name=="Melanoma" 
+                | Name=="Toll-like receptor signalling pathway" 
+                | Name=="Chronic myeloiod leukemia" 
+                | Name=="Notch signaling pathway" 
+                | Name=="Colorectal cancer" 
+                | Name=="Viral carcinogenesis" 
+                | Name=="Transcriptional misregulation in cancer")
+```
+
+selecting name of the pathway, status and p-value (column pG) 
+```{r warning=FALSE, message=FALSE}
+# kopn data
+select_kopn <- filter_kopn %>% 
+  dplyr::select(Name, pG, Status, pGFdr, pPERT)
+
+# reh data
+select_reh <- filter_reh %>% 
+  dplyr::select(Name, pG, Status, pGFdr, pPERT)
+```
+
+adding column cell line in the data
+```{r warning=FALSE, message=FALSE}
+select_kopn$cell_line <- "kopn"
+select_reh$cell_line <- "reh"
+```
+
+merging the datasets
+```{r warning=FALSE, message=FALSE}
+merged_data <- merge(x=select_kopn, y=select_reh, by="Name")
+merged_2 <- merged_data %>% 
+  dplyr::select(Name, Status.x, Status.y)
+colnames(merged_2)[2] <- "Status_KOPN"
+colnames(merged_2)[3] <- "Status_REH"
+
+df <- melt(merged_2, id.vars = "Name", variable.name = "Status")
+
+ggplot(df, aes(value, Name)) + geom_point(aes(colour = Status))
+
+ggplot(merged_2) + 
+  geom_point(aes(x= Status_KOPN, y=Name, colour = Status_KOPN))+
+  geom_point(aes(x=Status_REH, y=Name, colour = Status_REH))
+
+
+theme_bw() + labs(x="Status", y="Names of the pathways", title = "KOPN")
+```
+
+plot to see which pathways are inhibited and activated in which cell line
+```{r warning=FALSE, message=FALSE}
+ggplot(merged_data, aes(x=Status.x, y=Name, colour = Status.x)) + geom_point() + theme_bw() + labs(x="Status", y="Names of the pathways", title = "KOPN")
+
+ggplot(merged_data, aes(x=Status.y, y=Name, colour = Status.y)) + geom_point() + theme_bw() + labs(x="Status", y="Names of the pathways", title = "REH") 
+
+ggplot(select_kopn, aes(x=pGFdr, y=Name)) + geom_point() + theme_bw() + labs(x="pGFDR", y="Names of the pathways", title = "KOPN8") 
+
+ggplot(select_reh, aes(x=pGFdr, y=Name)) + geom_point() + theme_bw() + labs(x="pGFDR", y="Names of the pathways", title = "REH") 
+```
+
+Significant pathways
+selecting pathways that are less than 0.05
+```{r warning=FALSE, message=FALSE}
+sig_kopn <- select_kopn %>% 
+  dplyr::filter(pG < 0.05)
+sig_reh <- select_reh %>% 
+  dplyr::filter(pG < 0.05)
+```
+
+Taking the value of pPERT as less than 0.7
+```{r warning=FALSE, message=FALSE}
+less_than_kopn <- select_kopn %>%
+  dplyr::filter(pPERT < 0.7)
+less_than_reh <- select_reh %>% 
+  dplyr::filter(pPERT < 0.7)
+
+ggplot(less_than_kopn, aes(x=pPERT, y=Name)) + geom_point(aes(colour = Status)) + theme_bw() + labs(x="pPERT", y="Names of the pathways", title = "KOPN") 
+
+ggplot(less_than_reh, aes(x=pPERT, y=Name)) + geom_point(aes(colour = Status)) + theme_bw() + labs(x="pPERT", y="Names of the pathways", title = "REH") 
+```
+
